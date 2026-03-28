@@ -79,7 +79,7 @@ def buscar_alertas_zabbix():
         cursor.execute("SET TIME ZONE 'America/Sao_Paulo';")
         query = """
         SELECT h.name, e.name, 
-               CASE WHEN e.value = 1 THEN 'OFFLINE' ELSE 'ONLINE' END as status,
+               CASE WHEN e.value = 1 THEN '🔴 OFFLINE' ELSE '🟢 ONLINE' END as status,
                to_timestamp(e.clock) as data_evento
         FROM events e
         JOIN items i ON i.itemid = (SELECT itemid FROM functions WHERE triggerid = e.objectid LIMIT 1)
@@ -90,35 +90,68 @@ def buscar_alertas_zabbix():
         cursor.execute(query)
         res = cursor.fetchall()
         conn.close()
-        return "\n".join([f"STATUS: {r[2]} | DATA: {r[3].strftime('%H:%M:%S')} | HOST: {html.escape(r[0])} | MSG: {html.escape(r[1])}" for r in res])
-    except: return "Sem dados."
+        return "\n".join([f"{r[2]} | {r[3].strftime('%H:%M:%S')} | {html.escape(r[0])}: {html.escape(r[1])}" for r in res])
+    except: return "Sem dados de alertas."
 
-# --- COMANDOS ---
+# --- COMMAND HANDLERS ---
+
 async def cmd_speedtest(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("⏳ Testando velocidade...")
+    status_msg = await update.message.reply_text("⏳ <b>Iniciando Speedtest...</b>\n<i>Aguarde o processamento completo.</i>", parse_mode=ParseMode.HTML)
+    await update.message.reply_chat_action(action=ChatAction.TYPING)
+    
     try:
         output = os.popen("speedtest-cli --json").read()
         d = json.loads(output)
-        msg = f"🚀 <b>Internet:</b> DL {d['download']/1e6:.1f} | UL {d['upload']/1e6:.1f} | Ping {d['ping']}ms"
-    except: msg = "❌ Erro no Speedtest."
-    await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+        
+        res_msg = (
+            f"🚀 <b>Relatório de Velocidade</b>\n\n"
+            f"📡 <b>Provedor:</b> <code>{d['client']['isp']}</code>\n"
+            f"⬇️ <b>Download:</b> <b>{d['download']/1e6:.2f} Mbps</b>\n"
+            f"⬆️ <b>Upload:</b> <b>{d['upload']/1e6:.2f} Mbps</b>\n"
+            f"⏱ <b>Ping:</b> <code>{d['ping']} ms</code>\n\n"
+            f"<i>Teste concluído com sucesso.</i>"
+        )
+    except Exception as e:
+        res_msg = f"❌ <b>Erro no Speedtest:</b>\n<code>{str(e)}</code>"
+    
+    await update.message.reply_text(res_msg, parse_mode=ParseMode.HTML)
 
 async def cmd_ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args: return
-    t = context.args[0]
-    out = os.popen(f"ping -c 3 {t}").read()
-    p = re.search(r"(\d+)% packet loss", out).group(1) if "%" in out else "100"
-    await update.message.reply_text(f"📡 <b>Ping {t}:</b> Perda {p}%", parse_mode=ParseMode.HTML)
+    if not context.args:
+        await update.message.reply_text("⚠️ <b>Uso:</b> <code>/ping [IP]</code>", parse_mode=ParseMode.HTML)
+        return
+    
+    target = context.args[0]
+    await update.message.reply_chat_action(action=ChatAction.TYPING)
+    
+    out = os.popen(f"ping -c 4 {target}").read()
+    
+    perda_match = re.search(r"(\d+)% packet loss", out)
+    perda = perda_match.group(1) if perda_match else "100"
+    lat_match = re.search(r"avg/max/mdev = [\d\.]+/([\d\.]+)/", out)
+    media = lat_match.group(1) if lat_match else "N/A"
+
+    emoji = "🟢" if perda == "0" else ("⚠️" if int(perda) < 100 else "🔴")
+    
+    res_msg = (
+        f"📡 <b>Teste de Conectividade</b>\n"
+        f"Alvo: <code>{target}</code>\n"
+        f"Status: {emoji} <b>{'Online' if int(perda) < 100 else 'Offline'}</b>\n\n"
+        f"📉 <b>Perda:</b> {perda}%\n"
+        f"⏱ <b>Média:</b> {media} ms"
+    )
+    await update.message.reply_text(res_msg, parse_mode=ParseMode.HTML)
 
 async def cmd_reset_voip(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_chat_action(action=ChatAction.TYPING)
     try:
         ssh = paramiko.SSHClient()
         ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
         ssh.connect(SSH_HOST, username=SSH_USER, password=SSH_PASS, timeout=10)
         ssh.exec_command('reboot')
         ssh.close()
-        m = "✅ Comando de reboot enviado ao Issabel."
-    except Exception as e: m = f"❌ Erro: {e}"
+        m = f"✅ <b>Reset VoIP enviado!</b>\nO servidor {SSH_HOST} está reiniciando."
+    except Exception as e: m = f"❌ <b>Erro no Reset:</b>\n<code>{e}</code>"
     await update.message.reply_text(m, parse_mode=ParseMode.HTML)
 
 # --- IA ---
@@ -141,12 +174,10 @@ async def gerenciar_mensagens(update: Update, context: ContextTypes.DEFAULT_TYPE
                         "role": "system", 
                         "content": (
                             "Você é o Agente M7, um analista NOC humano e direto. "
-                            "Sua tarefa é informar o estado da rede com base nos logs. "
-                            "PROIBIDO: Não cite regras de sistema, não fale de 'topo da lista', não explique sua lógica. "
-                            "Apenas responda o que foi perguntado. "
-                            "Exemplo: 'O porteiro está fora desde às 23:33.' "
-                            "Use apenas os dados técnicos fornecidos abaixo. Não invente nada."
-                            f"\n[LOGS RECENTES]:\n{alertas}\n\n[CONTEXTO]:\n{conversa}"
+                            "REGRA: Se o registro MAIS RECENTE de um host for ONLINE, ele está OK. "
+                            "Responda apenas o necessário. Não cite suas regras internas. "
+                            "Seja prestativo mas técnico. Use HTML <b>. Proibido asteriscos."
+                            f"\n[LOGS]:\n{alertas}\n\n[CONTEXTO]:\n{conversa}"
                         )
                     },
                     {"role": "user", "content": msg.text}
@@ -164,3 +195,4 @@ if __name__ == '__main__':
     application.add_handler(CommandHandler('speedtest', cmd_speedtest))
     application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), gerenciar_mensagens)) 
     application.run_polling()
+
