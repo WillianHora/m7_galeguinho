@@ -14,7 +14,7 @@ Antes de rodar o bot, você precisará de:
 
 1.  **Clone o repositório:**
     ```bash
-    git clone https://github.com/seu-usuario/m7-bot.git
+    git clone git@github.com:WillianHora/m7_galeguinho.git
     cd m7-bot
     ```
 
