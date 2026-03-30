@@ -60,5 +60,5 @@ python bot.py
 
 * `/speedtest`: Realiza um teste de velocidade da conexão do servidor.
 * `/ping [IP/Host]`: Verifica a latência e perda de pacotes de um alvo.
-* `/resetvoip`: Envia um comando de reboot via SSH para o servidor Issabel.
+* `/resetvoip`: Envia um comando de reboot via SSH para um servidor linux
 * **Mensagens Diretas**: O bot usa a IA para analisar os últimos 25 eventos do Zabbix e responder dúvidas sobre o status da rede.
