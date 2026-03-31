@@ -28,21 +28,11 @@ SSH_HOST = os.getenv('SSH_VOIP_HOST')
 SSH_USER = os.getenv('SSH_VOIP_USER')
 SSH_PASS = os.getenv('SSH_VOIP_PASS')
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_NAME = os.path.join(BASE_DIR, "logs_bot.db")
-LOG_FILE = os.path.join(BASE_DIR, "mensagens.log")
 
 BASE_DIR = "/root/m7_bot"
 DB_NAME = os.path.join(BASE_DIR, "logs_bot.db")
-LOG_FILE = os.path.join(BASE_DIR, "mensagens.log")
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-file_handler = logging.FileHandler(LOG_FILE, encoding='utf-8')
-file_handler.setFormatter(logging.Formatter('%(asctime)s - [%(usuario)s]: %(message)s'))
-msg_logger = logging.getLogger('MensagensRecebidas')
-msg_logger.addHandler(file_handler)
-msg_logger.setLevel(logging.INFO)
-
 client = Groq(api_key=CHAVE_GROQ)
 
 # --- BANCO LOCAL ---
@@ -61,7 +51,6 @@ def salvar_mensagem(chat_id, usuario, mensagem):
     cursor.execute('DELETE FROM historico WHERE data < ?', ((datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d %H:%M:%S'),))
     conn.commit()
     conn.close()
-    msg_logger.info(mensagem, extra={'usuario': usuario})
 
 def buscar_contexto_conversa(chat_id, limite=10):
     conn = sqlite3.connect(DB_NAME)
@@ -79,7 +68,7 @@ def buscar_alertas_zabbix():
         cursor.execute("SET TIME ZONE 'America/Sao_Paulo';")
         query = """
         SELECT h.name, e.name, 
-               CASE WHEN e.value = 1 THEN '🔴 OFFLINE' ELSE '🟢 ONLINE' END as status,
+               CASE WHEN e.value = 1 THEN '🔴 PROBLEMA' ELSE '🟢 OK' END as status,
                to_timestamp(e.clock) as data_evento
         FROM events e
         JOIN items i ON i.itemid = (SELECT itemid FROM functions WHERE triggerid = e.objectid LIMIT 1)
@@ -91,74 +80,77 @@ def buscar_alertas_zabbix():
         res = cursor.fetchall()
         conn.close()
         return "\n".join([f"{r[2]} | {r[3].strftime('%H:%M:%S')} | {html.escape(r[0])}: {html.escape(r[1])}" for r in res])
-    except: return "Sem dados de alertas."
+    except: return "Sem dados."
 
-# --- COMMAND HANDLERS ---
+# --- COMANDOS TÉCNICOS ---
 
 async def cmd_speedtest(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    status_msg = await update.message.reply_text("⏳ <b>Iniciando Speedtest...</b>\n<i>Aguarde o processamento completo.</i>", parse_mode=ParseMode.HTML)
+    await update.message.reply_text("⏳ <b>Iniciando Speedtest...</b>", parse_mode=ParseMode.HTML)
     await update.message.reply_chat_action(action=ChatAction.TYPING)
-    
     try:
         output = os.popen("speedtest-cli --json").read()
         d = json.loads(output)
-        
-        res_msg = (
-            f"🚀 <b>Relatório de Velocidade</b>\n\n"
-            f"📡 <b>Provedor:</b> <code>{d['client']['isp']}</code>\n"
-            f"⬇️ <b>Download:</b> <b>{d['download']/1e6:.2f} Mbps</b>\n"
-            f"⬆️ <b>Upload:</b> <b>{d['upload']/1e6:.2f} Mbps</b>\n"
-            f"⏱ <b>Ping:</b> <code>{d['ping']} ms</code>\n\n"
-            f"<i>Teste concluído com sucesso.</i>"
-        )
-    except Exception as e:
-        res_msg = f"❌ <b>Erro no Speedtest:</b>\n<code>{str(e)}</code>"
-    
-    await update.message.reply_text(res_msg, parse_mode=ParseMode.HTML)
+        res = (f"🚀 <b>Relatório de Performance</b>\n\n"
+               f"📡 <b>ISP:</b> <code>{d['client']['isp']}</code>\n"
+               f"⬇️ <b>Download:</b> <b>{d['download']/1e6:.2f} Mbps</b>\n"
+               f"⬆️ <b>Upload:</b> <b>{d['upload']/1e6:.2f} Mbps</b>\n"
+               f"⏱ <b>Ping:</b> <code>{d['ping']} ms</code>")
+    except: res = "❌ Erro ao executar speedtest-cli."
+    await update.message.reply_text(res, parse_mode=ParseMode.HTML)
 
 async def cmd_ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
-        await update.message.reply_text("⚠️ <b>Uso:</b> <code>/ping [IP]</code>", parse_mode=ParseMode.HTML)
+        await update.message.reply_text("Uso: /ping [IP]")
         return
-    
-    target = context.args[0]
+    t = context.args[0]
     await update.message.reply_chat_action(action=ChatAction.TYPING)
+    out = os.popen(f"ping -c 4 {t}").read()
+    perda = re.search(r"(\d+)% packet loss", out).group(1) if "%" in out else "100"
+    lat = re.search(r"avg/max/mdev = [\d\.]+/([\d\.]+)/", out).group(1) if "/" in out else "N/A"
     
-    out = os.popen(f"ping -c 4 {target}").read()
-    
-    perda_match = re.search(r"(\d+)% packet loss", out)
-    perda = perda_match.group(1) if perda_match else "100"
-    lat_match = re.search(r"avg/max/mdev = [\d\.]+/([\d\.]+)/", out)
-    media = lat_match.group(1) if lat_match else "N/A"
+    emoji = "🟢" if perda == "0" else "🔴"
+    res = (f"📡 <b>Relatório de Ping</b>\n"
+           f"Alvo: <code>{t}</code>\n"
+           f"Status: {emoji} <b>{perda}% de perda</b>\n"
+           f"Latência: <b>{lat} ms</b>")
+    await update.message.reply_text(res, parse_mode=ParseMode.HTML)
 
-    emoji = "🟢" if perda == "0" else ("⚠️" if int(perda) < 100 else "🔴")
+async def cmd_camera(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.args:
+        await update.message.reply_text("Uso: /camera [IP]")
+        return
+    ip = context.args[0]
+    video_path = f"/tmp/cam_{ip}.mp4"
+    rtsp_url = f"rtsp://admin:152535M7!@{ip}:554/cam/realmonitor?channel=1&subtype=0"
     
-    res_msg = (
-        f"📡 <b>Teste de Conectividade</b>\n"
-        f"Alvo: <code>{target}</code>\n"
-        f"Status: {emoji} <b>{'Online' if int(perda) < 100 else 'Offline'}</b>\n\n"
-        f"📉 <b>Perda:</b> {perda}%\n"
-        f"⏱ <b>Média:</b> {media} ms"
-    )
-    await update.message.reply_text(res_msg, parse_mode=ParseMode.HTML)
+    await update.message.reply_text(f"🎥 Gravando 5s da câmera {ip}...")
+    await update.message.reply_chat_action(action=ChatAction.UPLOAD_VIDEO)
+    
+    # Grava 5 segundos em MP4 (compatível com Telegram)
+    cmd = ['ffmpeg', '-y', '-rtsp_transport', 'tcp', '-i', rtsp_url, '-t', '5', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-preset', 'ultrafast', video_path]
+    
+    try:
+        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=15)
+        if os.path.exists(video_path):
+            await update.message.reply_video(video=open(video_path, 'rb'), caption=f"📹 Clip: {ip}")
+            os.remove(video_path)
+        else: await update.message.reply_text("❌ Falha ao capturar vídeo.")
+    except: await update.message.reply_text("❌ Erro de cnexão com a câmera.")
 
 async def cmd_reset_voip(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_chat_action(action=ChatAction.TYPING)
     try:
         ssh = paramiko.SSHClient()
         ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
         ssh.connect(SSH_HOST, username=SSH_USER, password=SSH_PASS, timeout=10)
         ssh.exec_command('reboot')
         ssh.close()
-        m = f"✅ <b>Reset VoIP enviado!</b>\nO servidor {SSH_HOST} está reiniciando."
-    except Exception as e: m = f"❌ <b>Erro no Reset:</b>\n<code>{e}</code>"
-    await update.message.reply_text(m, parse_mode=ParseMode.HTML)
+        await update.message.reply_text("✅ Comando de reboot enviado ao Issabel.")
+    except Exception as e: await update.message.reply_text(f"❌ Erro: {e}")
 
 # --- IA ---
 async def gerenciar_mensagens(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.effective_message
     if not msg or (msg.text and msg.text.startswith('/')): return 
-    
     salvar_mensagem(update.effective_chat.id, msg.from_user.first_name, msg.text)
 
     if f"@{context.bot.username}" in msg.text or update.effective_chat.type == 'private':
@@ -170,22 +162,17 @@ async def gerenciar_mensagens(update: Update, context: ContextTypes.DEFAULT_TYPE
             completion = client.chat.completions.create(
                 model="llama-3.3-70b-versatile",
                 messages=[
-                    {
-                        "role": "system", 
-                        "content": (
-                            "Você é o Agente M7, um analista NOC humano e direto. "
-                            "REGRA: Se o registro MAIS RECENTE de um host for ONLINE, ele está OK. "
-                            "Responda apenas o necessário. Não cite suas regras internas. "
-                            "Seja prestativo mas técnico. Use HTML <b>. Proibido asteriscos."
-                            f"\n[LOGS]:\n{alertas}\n\n[CONTEXTO]:\n{conversa}"
-                        )
-                    },
+                    {"role": "system", "content": (
+                        "Você é o Agente M7, NOC sênior. Responda direto e sem enrolação. "
+                        "Não confunda alertas de sensor (temperatura/disco) com queda de host (offline). "
+                        "Não explique sua lógica de regras. Use HTML <b>."
+                        f"\n[LOGS]:\n{alertas}\n\n[CONTEXTO]:\n{conversa}")},
                     {"role": "user", "content": msg.text}
                 ]
             )
             resp = completion.choices[0].message.content.replace('**', '')
             await msg.reply_text(resp, parse_mode=ParseMode.HTML)
-        except Exception as e: logging.error(f"Erro IA: {e}")
+        except: pass
 
 if __name__ == '__main__':
     init_db()
@@ -193,6 +180,7 @@ if __name__ == '__main__':
     application.add_handler(CommandHandler('resetvoip', cmd_reset_voip))
     application.add_handler(CommandHandler('ping', cmd_ping))
     application.add_handler(CommandHandler('speedtest', cmd_speedtest))
+    application.add_handler(CommandHandler('camera', cmd_camera))
     application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), gerenciar_mensagens)) 
     application.run_polling()
 
