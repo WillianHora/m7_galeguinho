@@ -1,6 +1,6 @@
-## 🤖 Bot I.A - Monitoramento Redes
+## 🤖 Bot Galeguinho - Monitoramento Redes
 
-O **Bot I.A** é um bot de Telegram integrado ao Zabbix e Groq (Llama 3) para monitoramento de infraestrutura em tempo real. Ele permite consultar alertas, realizar testes de rede e gerenciar serviços via SSH.
+O **Bot Galeguinho** é um bot de Telegram integrado ao Zabbix e Groq (Llama 3) para monitoramento de infraestrutura em tempo real. Ele permite consultar alertas, realizar testes de rede e gerenciar serviços via SSH.
 
 ### 📋 Pré-requisitos
 
